@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// T3 — coding agent 的看护进程
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+// overnight — 让 AI 上夜班。把 coding agent 的 plan 排进队列，按时自动跑。
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig, parseWindow, inWindow } from './config.js';
 import { Queue } from './queue.js';
-import { Guard, sleep } from './guard.js';
-import { appendReport, askAI } from './agents.js';
+import { Runner, sleep } from './runner.js';
+import { appendReport } from './agents.js';
 import { TUI } from './tui.js';
 
 const argv = process.argv.slice(2);
@@ -13,11 +13,8 @@ const CMD = argv[0] || 'run';
 
 const cfg = loadConfig();
 const queue = new Queue(cfg);
-cfg._inWindow = () => inWindow(cfg._window);
 
-const state = { paused: false, current: null, lastAction: null };
-
-// ---------- 子命令 ----------
+const state = { current: null, paused: false, windowLabel: '—' };
 
 switch (CMD) {
   case 'init':
@@ -32,26 +29,31 @@ switch (CMD) {
     break;
   case 'add':
     if (!argv[1]) {
-      console.error('用法: t3 add "要做的事" [agent]');
+      console.error('用法: overnight add "要做的事" [agent]');
       process.exit(1);
     }
-    console.log('已加入: ' + queue.add(argv.slice(1).join(' '), argv[2] || null));
+    // 最后一个参数是已知 agent 名时当 agent 用，其余拼成 prompt
+    const known = Object.keys(cfg.agents);
+    let prompt, agent = null;
+    if (argv.length >= 3 && known.includes(argv[argv.length - 1])) {
+      agent = argv.pop();
+      prompt = argv.slice(1).join(' ');
+    } else {
+      prompt = argv.slice(1).join(' ');
+    }
+    console.log('已加入: ' + queue.add(prompt, agent));
     break;
   default:
     run();
 }
 
 function init() {
-  if (existsSync('t3.yaml')) {
-    console.log('t3.yaml 已存在');
-  } else {
-    console.log('没有 t3.yaml。参考 docs/strategy/t3-strategy-design.md 里的配置写一份。');
-  }
+  console.log(existsSync('overnight.yaml') ? 'overnight.yaml 已存在' : '没有 overnight.yaml，会用默认配置运行。');
   console.log('\n用法:');
-  console.log('  t3              启动，进 TUI');
-  console.log('  t3 add "要做的事"   往队列加一个任务');
-  console.log('  t3 status       看队列');
-  console.log('  t3 logs         看今天的报告');
+  console.log('  overnight              启动，进分屏日志界面');
+  console.log('  overnight add "计划"    往队列加一个任务（plan 要能重复执行）');
+  console.log('  overnight status       看队列');
+  console.log('  overnight logs         看今天的报告');
   process.exit(0);
 }
 
@@ -74,46 +76,43 @@ function showStatus() {
 // ---------- 主循环 ----------
 
 async function run() {
-  cfg._window = parseWindow(cfg.schedule.window);
+  const win = parseWindow(cfg.schedule.window);
+  const label = () => {
+    if (!win) return '全天';
+    return inWindow(win) ? '窗口内' : '窗外';
+  };
+  state.windowLabel = label();
 
-  const tui = new TUI(cfg, {
-    queue,
-    state,
-    onCommand: handleAction,
+  const tui = new TUI(cfg, { queue, state });
+  const runner = new Runner(cfg, {
+    log: (l) => tui.log(l),
+    onAgentOutput: (s) => tui.agentOutput(s),
   });
 
-  const guard = new Guard(cfg, { log: (l) => tui.log(l) });
-
-  // 主循环后台跑，TUI 只管显示
   (async () => {
     while (true) {
       try {
-        // 已经有任务在跑就一直等，窗口检查交给 guard 内部的定时器
-        if (state.current) { await sleep(30_000); continue; }
+        state.windowLabel = label();
 
-        if (!cfg._inWindow()) { await sleep(300_000); continue; }
-        if (state.paused) { await sleep(60_000); continue; }
+        // 有任务在跑就等它跑完（跑起来的任务不打断）
+        if (state.current) { await sleep(20_000); continue; }
+
+        // 窗口只决定要不要开新任务；全天时 win=null，直接放行
+        if (win && !inWindow(win)) { await sleep(60_000); continue; }
 
         queue.prune();
         const job = queue.next();
-
-        if (!job) {
-          await sleep(cfg.schedule.idleSleepMs);
-          continue;
-        }
+        if (!job) { await sleep(cfg.schedule.idleSleepMs); continue; }
 
         state.current = { id: job.id, startedAt: Date.now() };
         queue.mark(job.id, 'running');
         appendReport(cfg, `\n## 开始 — ${job.id}\n- ${job.prompt.slice(0, 200)}\n- agent: ${job.agent || cfg.default_agent}\n`);
 
-        const res = await guard.run(job);
+        const res = await runner.run(job);
 
         state.current = null;
         queue.mark(job.id, res.status, { reason: res.reason });
         tui.log(`[${job.id}] ${res.status}${res.reason ? ' — ' + res.reason : ''}`);
-
-        // deferred（窗口关了被收尾）重置成 pending，下轮继续跑
-        if (res.status === 'deferred') queue.mark(job.id, 'pending', {});
 
         await sleep(1000);
       } catch (e) {
@@ -124,51 +123,4 @@ async function run() {
   })();
 
   tui.start();
-}
-
-// ---------- 聊天里的操作 ----------
-
-// 结果统一进 TUI 对话区，console.log 会被 clear() 擦掉
-function say(msg) {
-  state.lastAction = msg;
-}
-
-async function handleAction(action, arg) {
-  switch (action) {
-    case 'add':
-      if (!arg) return;
-      say(`加了任务 ${queue.add(arg)}`);
-      break;
-    case 'delete': {
-      const id = matchId(arg);
-      if (!id) return;
-      say(queue.remove(id) ? `删了 ${id}` : `没找到 ${id}`);
-      break;
-    }
-    case 'reorder_first': {
-      const id = matchId(arg);
-      if (!id) return;
-      say(queue.reorder(id, 'first') ? `${id} 提到最前` : `${id} 现在跑不了，等这单结束`);
-      break;
-    }
-    case 'reorder_last': {
-      const id = matchId(arg);
-      if (!id) return;
-      say(queue.reorder(id, 'last') ? `${id} 排到最后` : `${id} 现在跑不了，等这单结束`);
-      break;
-    }
-    case 'toggle':
-      state.paused = !state.paused;
-      say(state.paused ? '好，暂停派单' : '好，恢复派单');
-      break;
-    default:
-      say('不认识这个操作: ' + action);
-  }
-}
-
-// "把 003 提上来" -> "003"
-function matchId(s) {
-  if (!s) return null;
-  const m = String(s).match(/(\d{3})/);
-  return m ? m[1] : null;
 }

@@ -1,4 +1,4 @@
-// 多 agent 适配 + AI 决策
+// 多 agent 适配（opencode / claude code ...）
 import { spawn } from 'node:child_process';
 import { appendFileSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -58,6 +58,7 @@ export class Agent {
       pid: proc.pid,
     };
   }
+
   // 杀掉整个进程组：agent 起的子进程（dev server、测试进程）也得死
   kill(handle, { graceMs = 3000 } = {}) {
     if (!handle?.proc || handle._killed) return;
@@ -95,77 +96,11 @@ export function tail(str, lines) {
   return arr.slice(-lines).join('\n');
 }
 
-// 调 AI 问一句话
-export async function askAI(cfg, system, user) {
-  const res = await fetch(`${cfg.ai.base_url}/v1/messages`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': cfg.ai.api_key,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: cfg.ai.model,
-      max_tokens: cfg.ai.max_tokens,
-      system,
-      messages: [{ role: 'user', content: user }],
-    }),
-  });
-
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    throw new Error(`AI 请求失败 ${res.status}: ${t.slice(0, 200)}`);
-  }
-
-  const data = await res.json();
-  return (data.content || [])
-    .filter((c) => c.type === 'text')
-    .map((c) => c.text)
-    .join('\n')
-    .trim();
-}
-
-// ---- 决策 ----
-
-// 任务挂了，该不该重试
-export async function judgeFailure(cfg, job, errText) {
-  const v = await askAI(cfg,
-    '你是 coding agent 的看护。判断任务失败后重试有没有意义。一句话回答，'
-    + '如果重试也没用就回答"放弃"，不要写别的。',
-    `任务：${job.prompt}
-用的 agent：${job.agent || cfg.default_agent}
-失败信息：
-${errText}
-
-这个能重试吗？一句话说明理由。`
-  );
-  const giveUp = v.includes('放弃') || v.includes('重试也没') || v.includes('没意义');
-  return { action: giveUp ? 'giveup' : 'retry', reason: v };
-}
-
-// 时间窗口关了，还跑着，续不续
-export async function judgeWindow(cfg, job, elapsed, outTail) {
-  const v = await askAI(cfg,
-    '你是 coding agent 的看护。现在配置的时间窗口关了，但任务还在跑。'
-    + '决定是"再宽限一会儿"还是"收尾停掉"。一句话回答。',
-    `任务：${job.prompt}
-已经跑了：${elapsed}
-最近输出：
-${outTail}
-
-继续等，还是收尾停掉？一句话说明理由。`
-  );
-  const stop = v.includes('收尾') || v.includes('停掉') || v.includes('没必要');
-  return { action: stop ? 'stop' : 'grace', reason: v };
-}
-
-// ---- 决策写入报告 ----
-
+// 报告：一天一个 md 文件，纯记录 runner 干了啥（无 AI 判断）
 export function appendReport(cfg, section) {
   const day = new Date().toISOString().slice(0, 10);
   const file = join(cfg.paths.reports, `${day}.md`);
 
   if (!existsSync(file)) writeFileSync(file, `# ${day}\n`, 'utf8');
   appendFileSync(file, section, 'utf8');
-  return file;
 }

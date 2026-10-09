@@ -1,10 +1,10 @@
 {
-  "name": "t3",
+  "name": "overnight",
   "version": "0.1.0",
-  "description": "Coding agent 的看护进程：管队列、盯执行、挂了自动判断重试",
+  "description": "让 AI 上夜班：把 coding agent 的 plan 排进队列，夜里自动跑，左右分屏看 runner 和 agent 日志",
   "type": "module",
   "bin": {
-    "t3": "./index.js"
+    "overnight": "./index.js"
   },
   "main": "index.js",
   "scripts": {
@@ -18,11 +18,11 @@
   },
   "files": [
     "index.js",
-    "guard.js",
+    "runner.js",
     "agents.js",
     "queue.js",
     "tui.js",
-    "t3.yaml"
+    "config.js"
   ],
   "license": "MIT"
 }

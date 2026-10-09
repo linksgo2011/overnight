@@ -1,0 +1,34 @@
+# overnight — 让 AI 上夜班
+# 队列里的一条任务就是一个 plan 的提示词，必须能从头重复执行（幂等）
+
+# 可用的 coding agent，{prompt} 是占位符
+agents:
+  claude:
+    command: claude
+    args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+  opencode:
+    command: ~/.opencode/bin/opencode
+    args: ["run", "{prompt}"]
+
+# 默认用哪个 agent（任务自己的 yaml 里可以用 agent: 覆盖）
+default_agent: opencode
+
+# runner：看住 agent 别卡死、别跑飞
+runner:
+  timeout: 60m        # 单个任务硬超时，到点杀掉
+  idle_kill: 10m      # 多久没输出算卡死
+  tail_lines: 80      # 报告里留多少行日志
+
+# 执行时机：默认夜间，设成 null 就是全天
+schedule:
+  window: "20:00-08:00"   # 跨夜窗口；null = 全天候
+  idle_sleep: 24h         # 队列空了睡多久再看
+
+# 失败重试（纯脚本，没有 AI 判断）
+retry:
+  max: 3
+  backoff: 5m
+
+# 每天一份的决策报告
+report:
+  dir: reports

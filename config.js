@@ -3,25 +3,20 @@ import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import YAML from 'yaml';
 
+const CONFIG_FILE = 'overnight.yaml';
+
 const DEFAULTS = {
-  ai: {
-    base_url: 'https://api.anthropic.com',
-    api_key: '',
-    model: 'claude-sonnet-4-5',
-    max_tokens: 1024,
-  },
   agents: {
-    claude: { command: 'claude', args: ['-p', '{prompt}', '--dangerously-skip-permissions'] },
+    opencode: { command: 'opencode', args: ['run', '{prompt}'] },
   },
-  default_agent: 'claude',
-  guard: {
+  default_agent: 'opencode',
+  runner: {
     timeout: '60m',
     idle_kill: '10m',
-    window_grace: '20m',
     tail_lines: 80,
   },
   schedule: {
-    window: '20:00-08:00',
+    window: '20:00-08:00',   // null / 空 = 全天
     idle_sleep: '24h',
   },
   retry: { max: 3, backoff: '5m' },
@@ -29,7 +24,10 @@ const DEFAULTS = {
 };
 
 function deepMerge(base, over) {
-  if (Array.isArray(over) || typeof over !== 'object' || over === null) return over ?? base;
+  if (over === undefined) return base;
+  // null 是显式覆盖（比如 schedule.window: null 表示全天），不能当成没填
+  if (over === null || Array.isArray(over) || typeof over !== 'object') return over;
+  if (typeof base !== 'object' || base === null) return over;
   const out = { ...base };
   for (const [k, v] of Object.entries(over)) {
     out[k] = k in base ? deepMerge(base[k], v) : v;
@@ -54,22 +52,21 @@ function deepExpand(obj) {
 }
 
 export function loadConfig(cwd = process.cwd()) {
-  const file = resolve(cwd, 't3.yaml');
+  const file = resolve(cwd, CONFIG_FILE);
   let user = {};
   if (existsSync(file)) {
     try {
       user = YAML.parse(readFileSync(file, 'utf8')) || {};
     } catch (e) {
-      throw new Error(`t3.yaml 解析失败: ${e.message}`);
+      throw new Error(`${CONFIG_FILE} 解析失败: ${e.message}`);
     }
   }
 
   const cfg = deepExpand(deepMerge(DEFAULTS, user));
 
   // 时长转毫秒
-  cfg.guard.timeoutMs = parseDuration(cfg.guard.timeout);
-  cfg.guard.idleKillMs = parseDuration(cfg.guard.idle_kill);
-  cfg.guard.windowGraceMs = parseDuration(cfg.guard.window_grace);
+  cfg.runner.timeoutMs = parseDuration(cfg.runner.timeout);
+  cfg.runner.idleKillMs = parseDuration(cfg.runner.idle_kill);
   cfg.schedule.idleSleepMs = parseDuration(cfg.schedule.idle_sleep);
   cfg.retry.backoffMs = parseDuration(cfg.retry.backoff);
 
@@ -98,11 +95,11 @@ export function parseDuration(s) {
   return n * mult;
 }
 
-// "20:00-08:00" -> 是否在窗口内（支持跨夜）
+// "20:00-08:00" -> 是否在窗口内（支持跨夜）；null/空 = 全天
 export function parseWindow(str) {
-  if (!str) return null;
+  if (str === null || str === undefined || String(str).trim() === '') return null;
   const m = String(str).match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
-  if (!m) throw new Error(`时间窗口格式不对: ${str}（应该像 20:00-08:00）`);
+  if (!m) throw new Error(`时间窗口格式不对: ${str}（应该像 20:00-08:00，或 null 表示全天）`);
 
   const toMin = (h, mm) => parseInt(h, 10) * 60 + parseInt(mm, 10);
   const start = toMin(m[1], m[2]);
