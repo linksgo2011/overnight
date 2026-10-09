@@ -1,0 +1,41 @@
+# t3 配置
+
+# 决策 AI（判断失败要不要重试、窗口关了要不要续、跟你对话）
+ai:
+  base_url: https://api.anthropic.com
+  api_key: ${ANTHROPIC_API_KEY}
+  model: claude-sonnet-4-5
+  max_tokens: 1024
+
+# 可用的 coding agent，{prompt} 是占位符
+agents:
+  claude:
+    command: claude
+    args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+  opencode:
+    command: ~/.opencode/bin/opencode
+    args: ["run", "{prompt}"]
+
+# 队列为空时用哪个
+default_agent: claude
+
+# 单个任务的看护参数
+guard:
+  timeout: 60m         # 硬超时，到点必杀
+  idle_kill: 10m       # 多久没新输出算卡死
+  window_grace: 20m    # 时间窗口结束后最多再宽限多久
+  tail_lines: 80       # 失败时给 AI 看日志末尾多少行
+
+# 什么时候派单
+schedule:
+  window: "20:00-08:00"   # 留空或 null = 全天可跑
+  idle_sleep: 24h         # 队列空时睡多久再扫
+
+# 重试
+retry:
+  max: 3
+  backoff: 5m
+
+# 报告
+report:
+  dir: reports

@@ -1,0 +1,28 @@
+{
+  "name": "t3",
+  "version": "0.1.0",
+  "description": "Coding agent 的看护进程：管队列、盯执行、挂了自动判断重试",
+  "type": "module",
+  "bin": {
+    "t3": "./index.js"
+  },
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "yaml": "^2.5.1"
+  },
+  "files": [
+    "index.js",
+    "guard.js",
+    "agents.js",
+    "queue.js",
+    "tui.js",
+    "t3.yaml"
+  ],
+  "license": "MIT"
+}
