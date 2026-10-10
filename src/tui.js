@@ -37,16 +37,16 @@ function charWidth(ch) {
   return 1;
 }
 
-const visWidth = (s) => {
+export const visWidth = (s) => {
   let w = 0;
   for (const ch of s) w += charWidth(ch);
   return w;
 };
 
-const padTo = (s, width) => s + ' '.repeat(Math.max(0, width - visWidth(s)));
+export const padTo = (s, width) => s + ' '.repeat(Math.max(0, width - visWidth(s)));
 
 // 按显示宽度折行
-function wrapLine(line, width) {
+export function wrapLine(line, width) {
   if (width < 1) return [''];
   const out = [];
   let cur = '';

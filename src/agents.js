@@ -4,6 +4,15 @@ import { appendFileSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+// OpenCode 桌面 App 注入的变量会让子进程误连桌面富服务（Session not found），
+// 起 agent 时必须剥掉；其余环境变量原样继承
+const OPENCODE_DESKTOP_VARS = ['OPENCODE_CLIENT', 'OPENCODE_SERVER_USERNAME', 'OPENCODE_SERVER_PASSWORD'];
+function agentEnv() {
+  const env = { ...process.env };
+  for (const k of OPENCODE_DESKTOP_VARS) delete env[k];
+  return env;
+}
+
 export class Agent {
   constructor(cfg) {
     this.cfg = cfg;
@@ -32,7 +41,7 @@ export class Agent {
 
     const proc = spawn(cmd, args, {
       cwd: this.cfg.paths.root,
-      env: { ...process.env },
+      env: agentEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
       // 独立进程组，这样 kill 能连带干掉 agent 起的子进程
       detached: true,

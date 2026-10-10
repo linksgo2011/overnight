@@ -227,13 +227,16 @@ export class Queue {
     return true;
   }
 
-  // 新会话开始时：把失败的 plan 打回 pending，让它们今晚/下轮重新尝试
+  // 新会话开始时：把失败的 plan 打回 pending，让它们今晚/下轮重新尝试。
+  // 顺带清掉卡在 running 的残留（上次被 kill 时留下，新会话里没人真在跑它）
   resetFailed() {
     let changed = false;
     for (const job of this.#parseJobs()) {
       if (job.broken) continue;
       for (const p of job.plans) {
-        if (p.status === PLAN_STATUS.FAILED && this.state[job.id]?.plans?.[p.id]) {
+        const st = p.status;
+        if ((st === PLAN_STATUS.FAILED || st === PLAN_STATUS.RUNNING)
+          && this.state[job.id]?.plans?.[p.id]) {
           this.state[job.id].plans[p.id].status = PLAN_STATUS.PENDING;
           this.state[job.id].plans[p.id].reason = null;
           changed = true;

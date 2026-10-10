@@ -5,7 +5,7 @@
 agents:
   opencode:
     command: ~/.opencode/bin/opencode
-    args: ["run", "--dangerously-skip-permissions", "{prompt}"]
+    args: ["run", "-m", "minimax/MiniMax-M3.1-Flash-Preview", "--dangerously-skip-permissions", "{prompt}"]
   claude:
     command: claude
     args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
