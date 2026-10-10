@@ -7,13 +7,16 @@ const CONFIG_FILE = 'overnight.yaml';
 
 const DEFAULTS = {
   agents: {
-    opencode: { command: 'opencode', args: ['run', '{prompt}'] },
+    opencode: { command: 'opencode', args: ['run', '--dangerously-skip-permissions', '{prompt}'] },
+    claude: { command: 'claude', args: ['-p', '{prompt}', '--dangerously-skip-permissions'] },
   },
   default_agent: 'opencode',
   runner: {
     timeout: '60m',
     idle_kill: '10m',
     tail_lines: 80,
+    prompt_template: '执行 plan 文件 {plan_file}，执行过程中不要询问，自行决策，并记录决策日志，写入 {decision_log_dir}',
+    decision_log_dir: 'logs/decisions',
   },
   schedule: {
     window: '20:00-08:00',   // null / 空 = 全天
@@ -74,10 +77,14 @@ export function loadConfig(cwd = process.cwd()) {
   cfg.paths = {
     root: cwd,
     queue: resolve(cwd, 'queue'),
+    plans: resolve(cwd, 'docs', 'plans'),
+    progress: resolve(cwd, 'docs', 'progress'),
+    decisions: resolve(cwd, cfg.runner.decision_log_dir),
     logs: resolve(cwd, 'logs'),
     reports: resolve(cwd, cfg.report.dir),
   };
-  for (const p of [cfg.paths.queue, cfg.paths.logs, cfg.paths.reports]) {
+  for (const p of [cfg.paths.queue, cfg.paths.plans, cfg.paths.progress,
+    cfg.paths.decisions, cfg.paths.logs, cfg.paths.reports]) {
     if (!existsSync(p)) mkdirSync(p, { recursive: true });
   }
 

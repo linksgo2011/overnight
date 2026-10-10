@@ -1,5 +1,5 @@
 // Runner：纯脚本看护。起 agent、盯三条线（退出/卡死/超时）、失败按次数重试。
-// 不做任何 AI 判断。窗口只决定「要不要开新任务」，跑起来的任务不打断。
+// 调度按 plan 粒度：谁 ready 谁跑；deps 没解完的（含依赖失败）不碰。
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Agent, tail, appendReport } from './agents.js';
@@ -46,56 +46,64 @@ export class Runner {
     this.current = null;
   }
 
-  // 跑一个任务直到成功或重试用完
-  async run(job) {
+  // 按配置把 prompt_template 拼上 plan 全文
+  buildPrompt(plan) {
+    const tpl = this.cfg.runner.prompt_template || '';
+    const header = tpl
+      .replace(/\{plan_file\}/g, plan.relFile || plan.title)
+      .replace(/\{decision_log_dir\}/g, this.cfg.runner.decision_log_dir)
+      .trim();
+    return [header, '--- plan 内容 ---', plan.content].filter(Boolean).join('\n\n');
+  }
+
+  // 跑一个 plan：单 plan 重试，最多 retry.max 次
+  async runPlan(job, plan) {
     const max = this.cfg.retry.max;
     let lastErr = '';
 
     for (let attempt = 1; attempt <= max; attempt++) {
-      // 第一次干净跑；重试把上次失败原因拼回去，让 plan 接着干
-      const prompt = attempt === 1
-        ? job.prompt
-        : `${job.prompt}\n\n---\n上次执行到一半挂了，错误如下：\n${lastErr}\n从当前状态接着干，注意别重复已经完成的部分。`;
-
-      const res = await this.#oneShot(job, prompt, attempt);
+      // 重放同一份 prompt：plan 自己靠 docs/progress/ 的进度文件续跑
+      const prompt = this.buildPrompt(plan);
+      const res = await this.#oneShot(job, plan, prompt, attempt);
       if (res.status === 'done') return { status: 'done', attempts: attempt };
 
       lastErr = res.error;
-      this.#report(job, attempt, res.reason, res.error, attempt < max ? 'retry' : 'failed');
-      this.log(`✗ [${job.id}] 第 ${attempt}/${max} 次失败 — ${res.reason}`);
+      this.#report(job, plan, attempt, res.reason, res.error, attempt < max ? 'retry' : 'failed');
+      this.log(`✗ [${job.id}/${plan.id}] 第 ${attempt}/${max} 次失败 — ${res.reason}`);
 
       if (attempt < max) await sleep(this.cfg.retry.backoffMs);
     }
 
-    return { status: 'failed', attempts: max, reason: '重试用完' };
+    return { status: 'failed', attempts: max, reason: lastErr ? '重试用完' : '重试用完' };
   }
 
   // 跑一次，盯到出结果
-  async #oneShot(job, prompt, attempt) {
+  async #oneShot(job, plan, prompt, attempt) {
     mkdirSync(this.cfg.paths.logs, { recursive: true });
-    const logFile = join(this.cfg.paths.logs, `${job.id}-a${attempt}.log`);
+    const logFile = join(this.cfg.paths.logs, `${job.id}-${plan.id}-a${attempt}.log`);
 
     let handle;
     try {
-      handle = this.agent.run(job.agent, prompt, {
+      handle = this.agent.run(job.agent || this.cfg.default_agent, prompt, {
         onOutput: (s) => this.onAgentOutput(s),
       });
     } catch (e) {
       return { status: 'err', reason: '启动失败', error: e.message };
     }
 
-    this.current = { job, handle, startedAt: Date.now() };
-    this.log(`▶ [${job.id}] 第 ${attempt} 次: ${handle.name} — ${handle.command}`);
+    this.current = { job, plan, handle, startedAt: Date.now() };
+    this.log(`▶ [${job.id}/${plan.id}] 第 ${attempt} 次: ${handle.name} — ${handle.command}`);
 
-    const outcome = await this.#watch(job, handle, logFile);
+    const outcome = await this.#watch(job, plan, handle, logFile);
     this.current = null;
     return outcome;
   }
 
   // 三条线：退出 / 卡死 / 超时
-  #watch(job, handle, logFile) {
+  #watch(job, plan, handle, logFile) {
     const { idleKillMs, timeoutMs, tailLines } = this.cfg.runner;
     const started = Date.now();
+    const tag = `${job.id}/${plan.id}`;
 
     return new Promise((resolve) => {
       let settled = false;
@@ -111,7 +119,7 @@ export class Runner {
       // 1. 进程退出
       handle.proc.on('exit', (code, sig) => {
         if (code === 0) {
-          this.log(`✓ [${job.id}] 完成，跑了 ${fmtDur(Date.now() - started)}`);
+          this.log(`✓ [${tag}] 完成，跑了 ${fmtDur(Date.now() - started)}`);
           return done({ status: 'done' });
         }
         const all = handle.output + '\n' + handle.stderr;
@@ -129,7 +137,6 @@ export class Runner {
       idleTimer = setInterval(() => {
         if (Date.now() - last > idleKillMs) {
           this.agent.kill(handle);
-          // 不等 exit 事件：agent 可能带子进程，父进程不一定马上退
           done({ status: 'err', reason: '卡死（长时间无输出）',
             error: tail(handle.output + '\n' + handle.stderr, tailLines) });
         }
@@ -149,12 +156,11 @@ export class Runner {
     });
   }
 
-  #report(job, attempt, reason, err, result) {
+  #report(job, plan, attempt, reason, err, result) {
     const now = new Date().toLocaleTimeString('zh-CN', { hour12: false });
     appendReport(this.cfg,
-      `\n## ${result === 'retry' ? '重试' : '失败'} — ${job.id} (${now})\n`
-      + `- 任务: ${job.prompt.slice(0, 80).replace(/\n/g, ' ')}\n`
-      + `- 第 ${attempt} 次尝试，${reason}\n`
+      `\n## ${result === 'retry' ? '重试' : '失败'} — ${job.id}/${plan.id} (${now})\n`
+      + `- 任务: ${plan.title}\n- 第 ${attempt} 次尝试，${reason}\n`
       + `- 日志末尾:\n\`\`\`\n${String(err).slice(-600)}\n\`\`\`\n`);
   }
 }

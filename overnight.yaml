@@ -1,34 +1,39 @@
 # overnight — 让 AI 上夜班
-# 队列里的一条任务就是一个 plan 的提示词，必须能从头重复执行（幂等）
+# 一个队列文件 = 一组 plan；plan 文档在 docs/plans/，进度在 docs/progress/。
 
-# 可用的 coding agent，{prompt} 是占位符
+# 可用的 coding agent，{prompt} 是占位符；启动会话都带 bypass 权限
 agents:
+  opencode:
+    command: ~/.opencode/bin/opencode
+    args: ["run", "--dangerously-skip-permissions", "{prompt}"]
   claude:
     command: claude
     args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
-  opencode:
-    command: ~/.opencode/bin/opencode
-    args: ["run", "{prompt}"]
 
-# 默认用哪个 agent（任务自己的 yaml 里可以用 agent: 覆盖）
+# 默认用哪个 agent（queue 文件的 agent 字段可以覆盖整组）
 default_agent: opencode
 
 # runner：看住 agent 别卡死、别跑飞
 runner:
-  timeout: 60m        # 单个任务硬超时，到点杀掉
-  idle_kill: 10m      # 多久没输出算卡死
-  tail_lines: 80      # 报告里留多少行日志
+  timeout: 60m            # 单个计划硬超时，到点杀掉
+  idle_kill: 10m          # 多久没输出算卡死
+  tail_lines: 80          # 报告里留多少行日志
+  # 追加给 agent 的通用提示词（{plan_file}/{decision_log_dir} 会被替换）
+  prompt_template: |
+    执行 plan 文件 {plan_file}，执行过程中不要询问，自行决策，
+    并记录决策日志，写入 {decision_log_dir}
+  decision_log_dir: logs/decisions   # 决策日志目录（相对项目根）
 
 # 执行时机：默认夜间，设成 null 就是全天
 schedule:
   window: "20:00-08:00"   # 跨夜窗口；null = 全天候
   idle_sleep: 24h         # 队列空了睡多久再看
 
-# 失败重试（纯脚本，没有 AI 判断）
+# 失败重试（纯脚本；单个 plan 重试完后失败，依赖它的 plan 保持 pending）
 retry:
   max: 3
   backoff: 5m
 
-# 每天一份的决策报告
+# 每天一份的运行报告
 report:
   dir: reports

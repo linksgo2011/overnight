@@ -135,7 +135,7 @@ export class TUI {
 
     const jobs = this.queue.list();
     const cur = this.state.current;
-    const agentLabel = cur ? `agent ${cur.id}` : 'agent';
+    const agentLabel = cur ? `agent ${cur.jobId}/${cur.planId}` : 'agent';
 
     const lines = [];
     lines.push(bold('overnight'.padEnd(12)) + dim(' 让 AI 上夜班 · Ctrl+C 退出'));
@@ -153,13 +153,13 @@ export class TUI {
 
     lines.push('└' + '─'.repeat(leftW) + '┴' + '─'.repeat(rightW) + '┘');
 
-    // 状态行
-    const pending = jobs.filter((j) => j.status === 'pending').length;
-    const running = jobs.filter((j) => j.status === 'running').length;
+    // 状态行：统计的是 plan 粒度
+    const pendingPlans = jobs.reduce((n, j) => n + (j.broken ? 0 : j.plans.filter((p) => p.status === 'pending').length), 0);
+    const totalPlans = jobs.reduce((n, j) => n + (j.broken ? 0 : j.plans.length), 0);
     const curInfo = cur
-      ? `当前 ${cur.id} (跑了 ${fmtDur(Date.now() - cur.startedAt)})`
-      : (running ? '正在收尾…' : '待命');
-    const status = `队列 ${pending} 待跑 · ${curInfo} · 窗口 ${this.state.windowLabel}`
+      ? `当前 ${cur.jobId}/${cur.planId} (跑了 ${fmtDur(Date.now() - cur.startedAt)})`
+      : '待命';
+    const status = `plans ${pendingPlans}/${totalPlans} 待跑 · ${curInfo} · 窗口 ${this.state.windowLabel}`
       + (this.state.paused ? ' · 已暂停' : '');
     lines.push(cyan(status));
 
