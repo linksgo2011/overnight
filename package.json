@@ -29,11 +29,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/linksgo2011/t3.git"
+    "url": "https://github.com/linksgo2011/overnight.git"
   },
-  "homepage": "https://github.com/linksgo2011/t3#readme",
+  "homepage": "https://github.com/linksgo2011/overnight#readme",
   "bugs": {
-    "url": "https://github.com/linksgo2011/t3/issues"
+    "url": "https://github.com/linksgo2011/overnight/issues"
   },
   "publishConfig": {
     "access": "public"
