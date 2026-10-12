@@ -1,5 +1,5 @@
 {
-  "name": "@linksgo2011/overnight",
+  "name": "@shaogefenhao/overnight",
   "version": "0.1.0",
   "description": "让 AI 上夜班：把 coding agent 的 plan 排进队列，夜里自动跑，左右分屏看 runner 和 agent 日志",
   "type": "module",
